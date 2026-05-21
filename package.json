@@ -1,0 +1,17 @@
+{
+  "name": "taobao-tracking-inline",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint taobao-tracking-inline.user.js",
+    "syntax": "node --check taobao-tracking-inline.user.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "eslint": "^9.39.1",
+    "prettier": "^3.6.2"
+  }
+}
