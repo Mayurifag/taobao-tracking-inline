@@ -5,6 +5,8 @@
 // @description  Shows Taobao logistics tracking numbers near orders/items and hides noisy non-order clutter.
 // @match        https://*.taobao.com/*
 // @match        https://*.tmall.com/*
+// @downloadURL  https://raw.githubusercontent.com/Mayurifag/taobao-tracking-inline/master/taobao-tracking-inline.user.js
+// @updateURL    https://raw.githubusercontent.com/Mayurifag/taobao-tracking-inline/master/taobao-tracking-inline.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==

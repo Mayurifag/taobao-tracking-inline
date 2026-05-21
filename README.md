@@ -17,6 +17,6 @@ Shows Taobao tracking numbers directly on the orders page.
 ## Install
 
 1. Install Tampermonkey or Violentmonkey.
-2. Create a new userscript.
-3. Paste `taobao-tracking-inline.user.js`.
+2. Open the [raw userscript](https://raw.githubusercontent.com/Mayurifag/taobao-tracking-inline/master/taobao-tracking-inline.user.js).
+3. Confirm installation in your userscript manager.
 4. Open Taobao orders and reload the page.
