@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Taobao Tracking Inline
 // @namespace    https://github.com/mayurifag/taobao-tracking-inline
-// @version      0.0.1
+// @version      0.0.2
 // @description  Shows Taobao logistics tracking numbers near orders/items and hides noisy non-order clutter.
 // @match        https://*.taobao.com/*
 // @match        https://*.tmall.com/*
