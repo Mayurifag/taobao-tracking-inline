@@ -17,6 +17,7 @@
   const LABEL_CLASS = "tb-logistics-visible-code";
   const HIDDEN_CLASS = "tb-logistics-hidden-noise";
   const STATUS_CLASS = "tb-logistics-status";
+  const SCRIPT_UI_SELECTOR = `.${LABEL_CLASS}, .${STATUS_CLASS}, [data-taobao-logistics-slot=true], [data-taobao-logistics-codes=true]`;
   const CACHE_PREFIX = "taobao-logistics:";
   const MASKED_USERNAME = "tb********";
   const REQUEST_DELAY_MIN = 250;
@@ -105,7 +106,10 @@
     const existing = order.querySelector(`.${STATUS_CLASS}`);
 
     if (existing) {
-      existing.textContent = message;
+      if (existing.textContent !== message) {
+        existing.textContent = message;
+      }
+
       return;
     }
 
@@ -458,17 +462,32 @@
 
   scheduleScan();
 
-  const observer = new MutationObserver((mutations) => {
-    if (
-      mutations.every((mutation) => {
-        const target = mutation.target;
+  function isIgnoredMutation(mutation) {
+    const target = mutation.target;
 
-        return (
-          target instanceof HTMLElement &&
-          (target.closest(".ant-popover") || target.classList.contains("ant-popover"))
-        );
-      })
-    ) {
+    if (target instanceof HTMLElement && target.closest(".ant-popover")) {
+      return true;
+    }
+
+    if (isScriptUiNode(target)) {
+      return true;
+    }
+
+    const changedNodes = [...mutation.addedNodes, ...mutation.removedNodes];
+
+    return changedNodes.length > 0 && changedNodes.every(isScriptUiNode);
+  }
+
+  function isScriptUiNode(node) {
+    if (node instanceof HTMLElement) {
+      return node.matches(SCRIPT_UI_SELECTOR) || Boolean(node.closest(SCRIPT_UI_SELECTOR));
+    }
+
+    return Boolean(node.parentElement?.closest(SCRIPT_UI_SELECTOR));
+  }
+
+  const observer = new MutationObserver((mutations) => {
+    if (mutations.every(isIgnoredMutation)) {
       return;
     }
 
