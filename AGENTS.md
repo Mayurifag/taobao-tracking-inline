@@ -6,3 +6,5 @@
 - Closed/unpaid orders are cached as `status: "none"`; transient request/no-tracking failures must stay uncached so reload retries them.
 - Keep request pacing small and randomized to reduce captcha risk.
 - Do not rely on visible Chinese labels where avoidable; users may use browser translation.
+- Login credentials are in git-crypt-protected `secrets.txt` (`email`, `password`). Use them for Taobao login when browser verification needs an authenticated session.
+- After filling credentials, show the browser to the user and ask them to complete any captcha or second-factor challenge manually.

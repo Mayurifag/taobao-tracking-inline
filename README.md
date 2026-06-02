@@ -7,11 +7,11 @@ Shows Taobao tracking numbers directly on the orders page.
 ## What It Does
 
 - Fetches logistics data from Taobao's order endpoint.
-- Adds the tracking code inline near the item actions.
+- Adds the tracking code inline near the order actions.
 - Saves results in `localStorage` to avoid refetching after reload.
-- Shows loading, retry countdowns, and skipped states.
-- Skips unpaid/closed orders with `no tracking (unpaid/closed)`.
-- Hides noisy recommendation/footer clutter.
+- Shows loading and retryable failure states.
+- Hides recommendation blocks/feeds, export tips, image-search hints, and the footer.
+- Stops after the loaded orders are processed so later page UI is not interrupted.
 - Uses small randomized request delays to reduce captcha risk.
 
 ## Install

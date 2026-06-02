@@ -1,10 +1,9 @@
 // ==UserScript==
 // @name         Taobao Tracking Inline
 // @namespace    https://github.com/mayurifag/taobao-tracking-inline
-// @version      0.0.2
-// @description  Shows Taobao logistics tracking numbers near orders/items and hides noisy non-order clutter.
-// @match        https://*.taobao.com/*
-// @match        https://*.tmall.com/*
+// @version      0.0.3
+// @description  Shows Taobao logistics tracking numbers near orders/items and hides bought-items clutter.
+// @match        https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm*
 // @downloadURL  https://raw.githubusercontent.com/Mayurifag/taobao-tracking-inline/master/taobao-tracking-inline.user.js
 // @updateURL    https://raw.githubusercontent.com/Mayurifag/taobao-tracking-inline/master/taobao-tracking-inline.user.js
 // @grant        none
@@ -15,19 +14,25 @@
   "use strict";
 
   const LABEL_CLASS = "tb-logistics-visible-code";
-  const HIDDEN_CLASS = "tb-logistics-hidden-noise";
   const STATUS_CLASS = "tb-logistics-status";
-  const SCRIPT_UI_SELECTOR = `.${LABEL_CLASS}, .${STATUS_CLASS}, [data-taobao-logistics-slot=true], [data-taobao-logistics-codes=true]`;
+  const STYLE_ID = "tb-logistics-inline-style";
+  const CARD_CLASS = "tb-logistics-card";
+  const CARD_BODY_CLASS = "tb-logistics-card-body";
+  const SLOT_SELECTOR = "[data-taobao-logistics-slot=true]";
+  const SCRIPT_UI_SELECTOR = `.${LABEL_CLASS}, .${STATUS_CLASS}, ${SLOT_SELECTOR}, [data-taobao-logistics-codes=true]`;
   const CACHE_PREFIX = "taobao-logistics:";
-  const MASKED_USERNAME = "tb********";
   const REQUEST_DELAY_MIN = 250;
   const REQUEST_DELAY_MAX = 700;
-  const RETRY_DELAY_MIN = 12000;
-  const RETRY_DELAY_MAX = 24000;
-  const MAX_RETRIES = 3;
   let queueRunning = false;
   let scanQueued = false;
   let rescanNeeded = false;
+  let observer = null;
+  let observerStopped = false;
+  let sawOrders = false;
+
+  if (window.location.hostname !== "buyertrade.taobao.com") {
+    return;
+  }
 
   function delay(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -37,8 +42,72 @@
     return delay(REQUEST_DELAY_MIN + Math.random() * (REQUEST_DELAY_MAX - REQUEST_DELAY_MIN));
   }
 
-  function randomRetryDelay() {
-    return RETRY_DELAY_MIN + Math.random() * (RETRY_DELAY_MAX - RETRY_DELAY_MIN);
+  function installStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+
+    const style = document.createElement("style");
+
+    style.id = STYLE_ID;
+    style.textContent = `
+      .trade-container-shopOrderContainer [class*="extBlank"],
+      .trade-container-shopOrderContainer [class*="extItems"],
+      [class*="exportFileTooltips"],
+      .ant-tooltip:has([class*="exportFileTooltips"]),
+      [class*="exportHighlight"],
+      .image-search-context-outTip,
+      [class*="recommend--"],
+      .tb-picks-container,
+      .tb-pick-feeds-container,
+      #product-list-container,
+      #J_SiteFooter,
+      .tb-footer {
+        display: none !important;
+      }
+
+      .${CARD_CLASS} {
+        display: inline-flex;
+        box-sizing: border-box;
+        max-width: 360px;
+        margin-left: 10px;
+        padding: 3px 7px;
+        border: 1px solid #ffd8bf;
+        border-radius: 999px;
+        background: #fff7f0;
+        color: #d4380d;
+        font-size: 12px;
+        line-height: 18px;
+        vertical-align: middle;
+        word-break: break-all;
+        user-select: text;
+        cursor: text;
+        contain: content;
+        isolation: isolate;
+      }
+
+      .trade-container-orderOperationsCol .${CARD_CLASS} {
+        display: flex;
+        width: fit-content;
+        max-width: 128px;
+        margin: 0 auto;
+        border-radius: 8px;
+        text-align: center;
+        overflow-wrap: anywhere;
+        word-break: normal;
+      }
+
+      .${CARD_BODY_CLASS},
+      .${LABEL_CLASS} {
+        display: inline;
+      }
+
+      .${LABEL_CLASS} {
+        color: #d4380d;
+        font-weight: 600;
+      }
+    `;
+    document.documentElement.append(style);
   }
 
   function createLabel(trackingNumber, carrier) {
@@ -47,18 +116,6 @@
     label.className = LABEL_CLASS;
     label.dataset.trackingNumber = trackingNumber;
     label.textContent = carrier ? `${trackingNumber} (${carrier})` : trackingNumber;
-    label.style.cssText = [
-      "display:inline-block",
-      "width:auto",
-      "max-width:100%",
-      "margin-left:0",
-      "padding:0",
-      "color:#ff5000",
-      "font-size:12px",
-      "line-height:16px",
-      "word-break:break-all",
-      "vertical-align:middle",
-    ].join(";");
 
     return label;
   }
@@ -82,22 +139,17 @@
       ?.remove();
 
     const container = document.createElement("span");
+    const body = document.createElement("span");
+
+    container.className = CARD_CLASS;
     container.dataset.taobaoLogisticsCodes = "true";
-    container.style.cssText = [
-      "display:inline-flex",
-      "width:auto",
-      "max-width:100%",
-      "align-items:center",
-      "contain:content",
-      "isolation:isolate",
-      "user-select:text",
-      "cursor:text",
-    ].join(";");
+    body.className = CARD_BODY_CLASS;
 
     for (const trackingNumber of missing) {
-      container.append(createLabel(trackingNumber, carrier));
+      body.append(createLabel(trackingNumber, carrier));
     }
 
+    container.append(body);
     target.append(container);
   }
 
@@ -106,31 +158,22 @@
     const existing = order.querySelector(`.${STATUS_CLASS}`);
 
     if (existing) {
-      if (existing.textContent !== message) {
-        existing.textContent = message;
+      const body = existing.querySelector(`.${CARD_BODY_CLASS}`);
+
+      if (body && body.textContent !== message) {
+        body.textContent = message;
       }
 
       return;
     }
 
     const status = document.createElement("span");
+    const body = document.createElement("span");
 
-    status.className = STATUS_CLASS;
-    status.textContent = message;
-    status.style.cssText = [
-      "display:inline-block",
-      "width:auto",
-      "max-width:100%",
-      "margin-left:0",
-      "color:#8a6d3b",
-      "font-size:12px",
-      "line-height:16px",
-      "vertical-align:middle",
-      "contain:content",
-      "isolation:isolate",
-      "user-select:text",
-      "cursor:text",
-    ].join(";");
+    status.className = `${STATUS_CLASS} ${CARD_CLASS}`;
+    body.className = CARD_BODY_CLASS;
+    body.textContent = message;
+    status.append(body);
 
     target.append(status);
   }
@@ -154,15 +197,6 @@
     } catch (_error) {}
   }
 
-  function setCachedNoTracking(orderId) {
-    try {
-      localStorage.setItem(
-        `${CACHE_PREFIX}${orderId}`,
-        JSON.stringify({ status: "none", savedAt: Date.now() }),
-      );
-    } catch (_error) {}
-  }
-
   function getOrderId(order) {
     const idElement = order.querySelector(
       "[id^=orderColContainer_], [id^=orderDetailCol_], [id^=orderOperationsCol_]",
@@ -177,38 +211,30 @@
   }
 
   function getOrderLabelTarget(order) {
-    const itemActions = order.querySelector("[class*=operate]");
+    const existingSlot = order.querySelector(SLOT_SELECTOR);
 
-    if (itemActions) {
-      let slot = itemActions.querySelector("[data-taobao-logistics-slot=true]");
+    if (existingSlot) {
+      return existingSlot;
+    }
 
-      if (!slot) {
-        slot = document.createElement("span");
-        slot.dataset.taobaoLogisticsSlot = "true";
-        slot.setAttribute("role", "text");
-        slot.style.cssText = [
-          "display:inline-flex",
-          "width:auto",
-          "max-width:280px",
-          "margin-left:8px",
-          "align-items:center",
-          "vertical-align:middle",
-          "contain:content",
-          "isolation:isolate",
-          "user-select:text",
-          "cursor:text",
-        ].join(";");
-        itemActions.append(slot);
-      }
+    const orderDate = order.querySelector('[class*="shopInfoOrderTime"]');
+
+    if (orderDate) {
+      const slot = document.createElement("span");
+
+      slot.dataset.taobaoLogisticsSlot = "true";
+      orderDate.after(slot);
 
       return slot;
     }
 
-    return order.querySelector(".trade-container-orderOperationsCol") || order;
-  }
+    const orderHeader = order.querySelector("[id^=orderColContainer_]");
 
-  function canHaveTracking(order) {
-    return order.querySelectorAll(".tbpc_boughtlist_orderItem_order_op").length > 2;
+    if (orderHeader) {
+      return orderHeader;
+    }
+
+    return order;
   }
 
   async function fetchLogistics(orderId) {
@@ -235,136 +261,14 @@
     order.dataset.taobaoLogisticsState = "done";
   }
 
-  function renderNoTracking(order, orderId) {
+  function renderNoTracking(order) {
     setStatus(order, "no tracking (unpaid/closed)");
-    setCachedNoTracking(orderId);
     order.dataset.taobaoLogisticsState = "done";
   }
 
-  function retryLater(order, orderId, reason, attempt = 1) {
-    const retryDelay = randomRetryDelay();
-    let secondsLeft = Math.ceil(retryDelay / 1000);
-
-    order.dataset.taobaoLogisticsState = "retry-scheduled";
-    setStatus(order, `${reason}; retry ${attempt}/${MAX_RETRIES} in ${secondsLeft}s`);
-
-    const countdown = window.setInterval(() => {
-      secondsLeft -= 1;
-
-      if (secondsLeft <= 0) {
-        window.clearInterval(countdown);
-        return;
-      }
-
-      setStatus(order, `${reason}; retry ${attempt}/${MAX_RETRIES} in ${secondsLeft}s`);
-    }, 1000);
-
-    window.setTimeout(async () => {
-      window.clearInterval(countdown);
-      setStatus(order, `retrying ${attempt}/${MAX_RETRIES}`);
-
-      try {
-        await randomRequestDelay();
-        const data = await fetchLogistics(orderId);
-
-        if (data) {
-          renderData(order, orderId, data);
-          return;
-        }
-
-        if (attempt < MAX_RETRIES) {
-          retryLater(order, orderId, "no tracking returned", attempt + 1);
-          return;
-        }
-
-        setStatus(order, "no tracking returned; will retry on reload");
-        order.dataset.taobaoLogisticsState = "retryable";
-        return;
-      } catch (_error) {
-        if (attempt < MAX_RETRIES) {
-          retryLater(order, orderId, "request failed", attempt + 1);
-          return;
-        }
-
-        setStatus(order, "request failed; will retry on reload");
-        order.dataset.taobaoLogisticsState = "retryable";
-      }
-    }, retryDelay);
-  }
-
-  function hideNoise() {
-    const blocks = document.querySelectorAll(
-      [
-        "[class*=extBlank]",
-        "[class*=extItems]",
-        "[class*=exportFileTooltips]",
-        "[class*=guess]",
-        "[class*=Guess]",
-        "[class*=recommend]",
-        "[class*=Recommend]",
-        "[class*=promotion]",
-        "[class*=Promotion]",
-        "[class*=marketing]",
-        "[class*=Marketing]",
-        "[class*=ad-]",
-        "[class*=Ad-]",
-        "[class*=advert]",
-        "[class*=Advert]",
-        "footer",
-        "[class*=footer]",
-        "[class*=Footer]",
-      ].join(","),
-    );
-
-    for (const block of blocks) {
-      if (block.closest(".ant-popover") || block.classList.contains("ant-popover")) {
-        continue;
-      }
-
-      const text = block.innerText || block.textContent || "";
-
-      if (block.closest(".trade-container-shopOrderContainer")) {
-        if (!text.includes("常买常逛") && !text.includes("推荐常看商品")) {
-          continue;
-        }
-      }
-
-      if (
-        text.includes("常买常逛") ||
-        text.includes("推荐常看商品") ||
-        text.includes("Recently viewed") ||
-        text.includes("最近浏览") ||
-        text.includes("热销爆款") ||
-        text.includes("不感兴趣") ||
-        text.includes("Not interested") ||
-        text.includes("新增订单导出功能") ||
-        text.includes("您可以批量导出订单信息") ||
-        text.includes("猜你喜欢") ||
-        text.includes("为你推荐") ||
-        text.includes("淘宝规则") ||
-        text.includes("平台服务协议") ||
-        text.includes("关于淘宝") ||
-        text.includes("营销中心") ||
-        text.includes("© 2003")
-      ) {
-        block.classList.add(HIDDEN_CLASS);
-        block.style.display = "none";
-      }
-    }
-  }
-
-  function maskUsernames() {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (node.parentElement?.closest(`.${LABEL_CLASS}, .${STATUS_CLASS}`)) {
-        continue;
-      }
-
-      if (/tb\d{6,}/.test(node.nodeValue)) {
-        node.nodeValue = node.nodeValue.replace(/tb\d{6,}/g, MASKED_USERNAME);
-      }
-    }
+  function renderRetryable(order, message) {
+    setStatus(order, `${message}; will retry on reload`);
+    order.dataset.taobaoLogisticsState = "retryable";
   }
 
   async function processOrder(order) {
@@ -372,8 +276,6 @@
     let data = null;
 
     if (!orderId) {
-      order.dataset.taobaoLogisticsState = "skipped";
-      setStatus(order, "skipped: no order id found");
       return;
     }
 
@@ -385,12 +287,7 @@
     }
 
     if (cached?.status === "none") {
-      renderNoTracking(order, orderId);
-      return;
-    }
-
-    if (!canHaveTracking(order)) {
-      renderNoTracking(order, orderId);
+      renderNoTracking(order);
       return;
     }
 
@@ -401,7 +298,7 @@
       await randomRequestDelay();
       data = await fetchLogistics(orderId);
     } catch (_error) {
-      retryLater(order, orderId, "request failed");
+      renderRetryable(order, "request failed");
       return;
     }
 
@@ -410,7 +307,23 @@
       return;
     }
 
-    retryLater(order, orderId, "no tracking returned");
+    renderRetryable(order, "no tracking returned");
+  }
+
+  function getUnprocessedOrders() {
+    return [...document.querySelectorAll(".trade-container-shopOrderContainer")].filter(
+      (order) =>
+        order instanceof HTMLElement && !order.dataset.taobaoLogisticsState && getOrderId(order),
+    );
+  }
+
+  function stopObserverIfDone() {
+    if (observerStopped || queueRunning || !sawOrders || getUnprocessedOrders().length) {
+      return;
+    }
+
+    observer?.disconnect();
+    observerStopped = true;
   }
 
   async function scan() {
@@ -422,12 +335,11 @@
     queueRunning = true;
     rescanNeeded = false;
 
-    hideNoise();
-    maskUsernames();
+    const orders = getUnprocessedOrders();
 
-    const orders = [...document.querySelectorAll(".trade-container-shopOrderContainer")].filter(
-      (order) => order instanceof HTMLElement && !order.dataset.taobaoLogisticsState,
-    );
+    if (orders.length) {
+      sawOrders = true;
+    }
 
     for (const order of orders) {
       await processOrder(order);
@@ -437,11 +349,14 @@
 
     if (rescanNeeded) {
       scheduleScan();
+      return;
     }
+
+    stopObserverIfDone();
   }
 
   function scheduleScan() {
-    if (scanQueued) {
+    if (observerStopped || scanQueued) {
       return;
     }
 
@@ -460,6 +375,7 @@
     requestAnimationFrame(run);
   }
 
+  installStyles();
   scheduleScan();
 
   function isIgnoredMutation(mutation) {
@@ -486,7 +402,7 @@
     return Boolean(node.parentElement?.closest(SCRIPT_UI_SELECTOR));
   }
 
-  const observer = new MutationObserver((mutations) => {
+  observer = new MutationObserver((mutations) => {
     if (mutations.every(isIgnoredMutation)) {
       return;
     }
